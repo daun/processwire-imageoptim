@@ -1,0 +1,772 @@
+<?php namespace ProcessWire;
+
+/**
+ * ImageOptim
+ *
+ * ImageOptim client for ProcessWire
+ *
+ * @version 0.0.9
+ * @author Philipp Daun https://github.com/philippdaun
+ * @license GPL-3.0 https://opensource.org/licenses/GPL-3.0
+ *
+ */
+
+class ImageOptim extends WireData implements Module
+{
+
+    const DEFAULT_SUFFIX = 'optim';
+
+    private $image = null;
+    private $optionOverrides = array();
+    private $isLocal;
+    private $compressionSettingsByFileType;
+    private $ignoredSizes = array();
+    private $debug = false;
+
+    /**
+     * Module construct: include vendor files
+     *
+     */
+
+    public function __construct() {
+        require_once __DIR__ . '/vendor/autoload.php';
+    }
+
+    /**
+     * Module init: set defaults
+     *
+     */
+
+    public function init() {
+        $this->isLocal = in_array($_SERVER['REMOTE_ADDR'], array('localhost', '10.0.0.1', '127.0.0.1', '::1')) || stripos($_SERVER['SERVER_NAME'], 'localhost') !== false;
+        $this->parseCompressionSettingsField();
+        $this->setIgnoredSizes();
+    }
+
+    /**
+     * Module ready: set up hooks
+     *
+     */
+
+    public function ready() {
+
+        // Generate optimized files manually
+
+        $this->addHook('Pageimage::optimize', $this, 'getOptimizedPageimage');
+
+        // Hook into deletion of files to also delete variations
+
+        $this->addHook('Pageimages::delete', $this, 'deleteOptimizedPageimage');
+
+        // Optimize image variations on resize / crop
+
+		$this->addHookBefore('Pageimage::size', $this, 'beforePageimageSize');
+		$this->addHookAfter('Pageimage::size', $this, 'afterPageimageSize');
+        $this->addHookBefore('ImageSizer::resize', $this, 'beforeImageSizerResize');
+        $this->addHookAfter('ImageSizer::resize', $this, 'afterImageSizerResize');
+        
+        // $this->addHookBefore('Pageimage::crop', $this, 'beforePageimageCrop');
+        // $this->addHookAfter('ProcessPageEditImageSelect::executeResize', $this, 'imageSelectResize');
+    }
+
+    /**
+     * Module install: check for socket support
+     *
+     */
+
+    public function ___install() {
+        if (!$this->canPerformApiCalls()) {
+            throw new WireException("Your PHP has allow_url_fopen disabled, which is required by ImageOptim.");
+        }
+    }
+
+    /**
+     * Module uninstall
+     *
+     */
+
+    public function ___uninstall() {
+
+    }
+
+    /**
+     * Allowed image types
+     * 
+	 * @return array
+     * 
+     */
+
+    private static function allowedImageTypes() {
+        return array('png', 'jpeg', 'jpg', 'gif');
+    }
+
+
+    /**
+     * Check if image at given path can be compressed
+     *
+	 * @param string $path Path of image file
+	 * @return bool
+     *
+     */
+
+    protected function isImageAllowed($path) {
+
+        $extension = $this->getFileExtension($path);
+        if (!in_array($extension, $this->allowedImageTypes())) {
+            return false;
+        }
+        if (!$this->compressionSettingsByFileType) {
+            return true;
+        }
+        if (isset($this->compressionSettingsByFileType[$extension]) || isset($this->compressionSettingsByFileType['default'])) {
+            return true;
+        }
+        return false;
+    }
+
+	/**
+	 * Check if image size is allowed at given $width and $height
+	 *
+	 * @param int $width Resized image width
+	 * @param int $height Resized image height
+	 * @return bool
+     *
+	 */
+
+	protected function isImageSizeAllowed($width, $height) {
+		foreach($this->ignoredSizes as $size) {
+			if($size['width'] === $width && $size['height'] === $height) {
+				return false;
+			}
+		}
+		return true;
+    }
+
+
+    /**
+     * Get compression settings by file type
+     *
+     * @param string $type Image type (extension)
+	 * @return array
+     *
+     */
+
+    protected function getCompressionSettingsByFiletype($type) {
+        $type = strtolower($type);
+
+        if (isset($this->compressionSettingsByFileType[$type])) {
+            $settings = $this->compressionSettingsByFileType[$type];
+        }
+        else if (isset($this->compressionSettingsByFileType['default'])) {
+            $settings = $this->compressionSettingsByFileType['default'];
+        }
+        else {
+            $settings = array('quality' => $this->quality, 'dpr' => 1);
+        }
+
+        return (object) $settings;
+    }
+
+    /**
+     * Get compression settings from file path
+     *
+	 * @param string $path Path of image file
+	 * @return array
+     *
+     */
+
+    protected function getCompressionSettingsFromFilename($path) {
+        return $this->getCompressionSettingsByFiletype($this->getFileExtension($path));
+    }
+
+	/**
+	 * Pageimage::size before hook
+     *
+     * Auto mode, step 1 -- flag images to be compressed
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+
+	public function beforePageimageSize(HookEvent $event) {
+        $this->image = null;
+        $this->optionOverrides = null;
+        $image = $event->object;
+
+        list($width, $height, $options) = $event->arguments;
+
+        if (is_array($options)) {
+            $options = array_merge(wire('config')->imageSizerOptions, $options ? $options : array());
+        }
+        else {
+            $options = wire('config')->imageSizerOptions;
+        }
+
+        unset($options['quality']); // Clashes with PW quality option = JPEG quality
+
+		if (@$options['optimize'] === false) {
+            return;
+        }
+		if (!$this->isImageAllowed($image->filename)) {
+            return;
+        }
+        if (!$this->isImageSizeAllowed((int) $width, (int) $height)) {
+            return;
+        }
+		if ($this->auto_optimize || @$options['optimize']) {
+			$this->image = $image;
+			$this->optionOverrides = $options;
+		}
+    }
+
+	/**
+	 * ImageSizer::resize before hook
+     *
+     * Auto mode, step 2 -- set quality to 100% before resize
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+
+	public function beforeImageSizerResize(HookEvent $event) {
+		if($this->image && $this->image instanceof Pageimage) {
+			$resizer = $event->object;
+            $resizer->setQuality(100);
+        }
+    }
+
+	/**
+	 * ImageSizer::resize after hook
+     *
+     * Auto mode, step 3 -- optimize image if flagged before
+	 *
+	 * @param HookEvent $event
+	 *
+	 */
+
+	public function afterImageSizerResize(HookEvent $event) {
+        if ($this->image) {
+            $resizer = $event->object;
+            $basename = $this->getBasename($resizer->filename);
+            if ($this->debug) {
+                $this->log("Optimizing image on resize: {$basename}");
+            }
+            $this->optimizeImageByPath($resizer->filename, true, $this->optionOverrides);
+        }
+    }
+
+	/**
+	 * Pageimage::size after hook
+     *
+     * Auto mode, step 4 -- unset flagged image and option overrides
+     *
+     * @param HookEvent $event
+	 *
+	 */
+
+	public function afterPageimageSize(HookEvent $event) {
+        $this->image = null;
+        $this->optionOverrides = null;
+	}
+
+    /**
+     * Returns the optimized version of a given picture
+     *
+     * @param HookEvent $event
+     *
+     */
+
+    public function getOptimizedPageimage(HookEvent $event) {
+        $image = $event->object;
+        $overrides = $event->arguments(0);
+        if ($this->debug) {
+            $this->log("Optimizing image manually: {$image->basename}");
+        }
+        $event->return = $this->optimizePageimage($image, $overrides);
+    }
+
+    /**
+     * Optimize a single Pageimage
+     *
+     * @param Pageimage $image
+     * @param mixed $overrides
+     * @return Pageimage
+     */
+
+    protected function optimizePageimage($image, $overrides = null) {
+
+        if (!$this->isPageimage($image)) {
+            return;
+        }
+
+        $source = $image->filename;
+        $destination = $this->getOptimizedPath($image);
+        $optimized = null;
+
+        // Return cached image if possible
+
+        if (is_file($destination) && filemtime($destination) >= filemtime($source)) {
+            if ($this->debug) {
+                $this->log("Optimized file already exists: " . $this->getBasename($destination));
+            }
+            $optimized = clone $image;
+            $optimized->setFilename($destination);
+            $optimized->setOriginal($image);
+        }
+
+        // Fetch optimized image
+
+        else {
+            $this->fetchOptimizedImage($image, $destination, $overrides);
+            $optimized = clone $image;
+            $optimized->setFilename($destination);
+            $optimized->setOriginal($image);
+        }
+
+        // Worst case, return original
+
+        if (!$optimized) {
+            $optimized = $image;
+        }
+
+        return $optimized;
+    }
+
+    /**
+     * Optimize a single image file, given a disk path
+     *
+     * @param string $path
+     * @param bool $replace
+     * @return bool
+     */
+
+    protected function optimizeImageByPath($path, $replace = false, $overrides = null) {
+
+        if (!is_file($path)) {
+            return false;
+        }
+
+        // Replace file: path = destiantion
+
+        if ($replace) {
+            $destination = $path;
+            if ($this->debug) {
+                $this->log("Replacing file in place: {$path}");
+            }
+        }
+
+        // Create optimized variation: get optimized filename & check if it exists
+
+        else {
+            $destination = $this->getOptimizedPath($path);
+            if (is_file($destination) && filemtime($destination) >= filemtime($path)) {
+                if ($this->debug) {
+                    $this->log("Optimized file already exists: {$destination}");
+                }
+                return true;
+            }
+        }
+
+        if ($this->debug) {
+            $this->log("Fetching optimized image to {$destination}");
+        }
+        return $this->fetchOptimizedImage($path, $destination, $overrides);
+    }
+
+    /**
+     * Perform a call to the ImageOptim API and save the image on disk
+     *
+     * @param Pageimage $image
+     * @param string $destination
+     * @param array $settings
+     *
+     * @return bool
+     *
+     */
+
+    protected function fetchOptimizedImage($image, $destination, $overrides = array()) {
+        $api = new \ImageOptim\API($this->username);
+
+        // Get path / url from image
+
+        if ($this->isPageimage($image)) {
+            $url = $image->httpUrl;
+            $path = $image->filename;
+        }
+        else if (is_string($image)) {
+            $url = $path = $image;
+        }
+
+        $basename = $this->getBasename($path);
+
+        // Get settings
+
+        $settings = $this->getCompressionSettingsFromFilename($path);
+        $quality = $settings->quality;
+        $dpr = $settings->dpr;
+
+        if (is_string($overrides)) {
+            $quality = $overrides;
+        }
+        else if (isset($overrides['quality']) && is_string($overrides['quality'])) {
+            $quality = $overrides['quality'];
+        }
+        else if (isset($overrides['optimize']) && is_string($overrides['optimize'])) {
+            $quality = $overrides['quality'];
+        }
+
+        if (isset($overrides['dpr'])) {
+            $dpr = $overrides['dpr'];
+        }
+
+        // Convert image
+
+        $apiImage = null;
+        $result = null;
+
+        if (strpos($url, '://') !== false && !$this->isLocal) {
+            $apiImage = $api->imageFromURL($url);
+            if ($this->debug) {
+                $this->log("Optimizing image from URL: {$url}");
+            }
+        }
+        else if ($path && file_exists($path)) {
+            $apiImage = $api->imageFromPath($path);
+            if ($this->debug) {
+                $this->log("Optimizing image from path: {$path}");
+            }
+        }
+        else {
+            $this->log("Error: image is neither Pageimage nor path: {$image}");
+            return false;
+        }
+
+        if ($apiImage) {
+            $result = $apiImage->quality($quality)->dpr($dpr)->getBytes();
+        }
+
+        if ($result) {
+            $this->logCompressionResults($destination, filesize($path), strlen($result));
+            file_put_contents($destination, $result);
+            return true;
+        }
+    }
+
+    protected function logCompressionResults($filename, $sizeBefore, $sizeAfter) {
+        if($this->logging) {
+
+            $sizeBeforeKb = round($sizeBefore / 1024);
+            $sizeAfterKb = round($sizeAfter / 1024);
+
+            $reduction = $sizeBefore - $sizeAfter;
+            $reductionKb = round($reduction / 1024);
+            $reductionPercent = round(($reduction / $sizeBefore) * 100);
+
+            list($basename, $pageID) = array_reverse(explode('/', $filename));
+
+            $message = sprintf('ImageOptim saved %6$d%% from %2$s (Before: %3$d KB, after: %4$d KB, savings: %5$d KB)',
+                $pageID, $basename, $sizeBeforeKb, $sizeAfterKb, $reductionKb, $reductionPercent);
+            $this->log($message);
+        }
+    }
+
+    /**
+     * Returns true if the ProcessWire instance is able to perform API calls
+     *
+     * @return bool
+     *
+     */
+
+    protected function canPerformApiCalls() {
+        return ($this->ini_get_bool('allow_url_fopen'));
+    }
+
+    /**
+     * Returns true if the ProcessWire instance is able to submit images to the ImageOptim API
+     *
+     * @return bool
+     *
+     */
+
+    public function canConvertImages() {
+        return $this->canPerformApiCalls();
+    }
+
+    /**
+     * Get the file extension of a given file
+     *
+     * @param string $path
+     * @return string
+     *
+     */
+
+    protected function getFileExtension($path) {
+        return pathinfo($path, PATHINFO_EXTENSION);
+    }
+
+    /**
+     * Get the basename of a given file
+     *
+     * @param string $path
+     * @return string
+     *
+     */
+
+    protected function getBasename($path) {
+        return pathinfo($path, PATHINFO_BASENAME);
+    }
+
+    /**
+     * Check if a given object is a ProcessWire Pageimage
+     *
+     * @param object $obj
+     * @return bool
+     *
+     */
+
+    protected function isPageimage($obj) {
+        return $obj instanceof Pageimage;
+    }
+
+    /**
+     * Returns true if the path is a path to an optimized version of an image
+     *
+     * @param $path
+     * @return bool
+     *
+     */
+
+    protected function isOptimizedVariation($path) {
+        $info = pathinfo($path);
+        $nameSegments = explode('.', $info['filename']);
+
+        return (end($nameSegments) == $this->getOptimizedFileSuffix());
+    }
+
+    /**
+     * Get file suffix of optimized images
+     *
+     * @return string
+     *
+     */
+
+    protected function getOptimizedFileSuffix() {
+        return strtolower(trim($this->file_suffix) ? trim($this->file_suffix) : self::DEFAULT_SUFFIX);
+    }
+
+    /**
+     * Return the path of an image's optimized version
+     *
+     * @param mixed $image
+     * @return string
+     *
+     */
+
+    protected function getOptimizedPath($image) {
+
+		if ($image instanceof Pageimage) {
+			$filename = $image->filename;
+		} else {
+			$filename = $image;
+        }
+
+        $info = pathinfo($filename);
+
+        return $info['dirname'] . '/' . $info['filename'] . '.' . $this->getOptimizedFileSuffix() . '.' . $info['extension'];
+    }
+
+    /**
+     * Remove all optimized versions of a Pageimage
+     *
+     * @param HookEvent $event
+     *
+     */
+
+    public function deleteOptimizedPageimage(HookEvent $event) {
+        $images = $event->object;
+        $image = $event->arguments[0];
+
+        if (is_string($image)) {
+            $image = $images->get($image);
+        }
+        if (!$image) {
+            return;
+        }
+
+        $num = 0;
+
+        // Remove all optimized image variations
+
+        foreach ($this->getAssociatedImages($image) as $image_file) {
+            try {
+                unlink($image_file);
+                $num++;
+            }
+            catch (Exception $e) {
+                $this->log("Error: associated images couldn't be removed for $image->name.");
+            }
+        }
+
+        if ($this->debug) {
+            $this->log("Removed {$num} optimized image(s)");
+        }
+    }
+
+    /**
+     * Return all associated image files of a Pageimage: variations, etc.
+     *
+     * @param Pageimage $image
+     * @return array
+     *
+     */
+
+    protected function getAssociatedImages(Pageimage $image) {
+        $info = pathinfo($this->getImagePath($image));
+        return glob($info['dirname'] . '/' . $info['filename'] . "*");
+    }
+
+    /**
+     * Return path of a Pageimage object
+     *
+     * @param Pageimage $image
+     * @return string
+     *
+     */
+
+    protected function getImagePath(Pageimage $image) {
+        return wire('config')->paths->files . $image->page->id . '/' . $image->name;
+    }
+
+    /**
+	 * Set ignoredSizes array from admin thumb sizes
+	 *
+	 */
+
+	protected function setIgnoredSizes() {
+
+        // Ignore admin thumbnail sizes
+
+		$width = wire('config')->adminThumbOptions['width'];  // deprecated option
+        $height = wire('config')->adminThumbOptions['height']; // deprecated option
+        $grid = wire('config')->adminThumbOptions['gridSize']; // currently in use
+
+        // $this->ignoredSizes[] = array('width' => (int) $width, 'height' => (int) $height);
+
+		$this->ignoredSizes[] = array('width' => (int) $grid, 'height' => 0);
+		$this->ignoredSizes[] = array('width' => (int) $grid * 2, 'height' => 0); // @2x
+		$this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid);
+		$this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid * 2); // @2x
+    }
+
+    /**
+     * Parse user-supplied compression settings
+     *
+     * Example settings:
+     * jpg,jpeg: quality=medium
+     * png: quality=low,2x
+     *
+     */
+
+    protected function parseCompressionSettingsField() {
+        if (!$this->format_settings || $this->compressionSettingsByFileType) {
+            return false;
+        }
+
+        $parsed = array();
+
+        // Split into lines
+
+        $lines = preg_split("/\r\n|\n|\r/", $this->format_settings);
+
+        foreach ($lines as $line) {
+
+            // Split into formats and settings
+
+            $parts = explode(':', $line);
+            if (count($parts) === 1) {
+                $settings = trim($parts[0]);
+            }
+            else {
+                $format = trim($parts[0]);
+                $settings = trim($parts[1]);
+            }
+
+            if ($settings) {
+                $config = $this->parseCompressionSettings($settings);
+
+                if ($format) {
+                    $formats = explode(',', $format);
+                    foreach ($formats as $extension) {
+                        $extension = strtolower(trim($extension));
+                        $parsed[$extension] = $config;
+                    }
+                }
+                else {
+                    $parsed['default'] = $config;
+                }
+            }
+        }
+
+        $this->compressionSettingsByFileType = $parsed;
+    }
+
+    /**
+     * Parse a single line of compression settings into an options array
+     *
+     * Example line: quality=low,2x
+     *
+     * @param string $str The configuration line for a single image type
+     * @return array
+     *
+     */
+
+    protected function parseCompressionSettings($str) {
+        $config = array();
+
+        $items = explode(',', $str);
+
+        foreach ($items as $item) {
+            if (preg_match("/^quality=(\w+)$/i", $item, $matches)) {
+                $config['quality'] = $matches[1];
+            }
+            else if (preg_match("/^([1-3])x$/i", $item, $matches)) {
+                $config['dpr'] = (int) $matches[1];
+            }
+        }
+
+        if (empty($config['quality'])) {
+            $config['quality'] = $this->quality;
+        }
+        if (empty($config['dpr'])) {
+            $config['dpr'] = 1;
+        }
+
+        return $config;
+    }
+
+    /**
+     * Return true or false for a PHP configuration
+     *
+     * @param $a
+     * @return bool
+     *
+     */
+
+    protected function ini_get_bool($a) {
+        $b = ini_get($a);
+
+        switch (strtolower($b)) {
+            case 'on':
+            case 'yes':
+            case 'true':
+                return 'assert.active' !== $a;
+
+            case 'stdout':
+            case 'stderr':
+                return 'display_errors' === $a;
+
+            default:
+                return (bool)(int)$b;
+        }
+    }
+}

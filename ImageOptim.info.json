@@ -1,0 +1,14 @@
+{
+    "title": "ImageOptim",
+    "version": "0.0.9",
+    "author": "Philipp Daun",
+    "summary": "Compress images using the ImageOptim API",
+    "href": "https://github.com/philippdaun/ImageOptim",
+    "icon": "magic",
+    "autoload": true,
+    "singular": true,
+    "permanent": false,
+    "requires": "ProcessWire>=3.0",
+    "license": "GPL-3.0",
+    "hreflicense": "https://opensource.org/licenses/GPL-3.0"
+}
