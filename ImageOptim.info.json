@@ -1,6 +1,6 @@
 {
     "title": "ImageOptim",
-    "version": "0.0.9",
+    "version": "0.1",
     "author": "Philipp Daun",
     "summary": "Compress images using the ImageOptim API",
     "href": "https://github.com/philippdaun/ImageOptim",
