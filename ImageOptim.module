@@ -18,6 +18,7 @@ class ImageOptim extends WireData implements Module
 
     private $image = null;
     private $optionOverrides = array();
+    private $replaceImage = false;
     private $isLocal = false;
     private $compressionSettingsByFileType;
     private $ignoredSizes = array();
@@ -39,6 +40,7 @@ class ImageOptim extends WireData implements Module
 
     public function init() {
         $this->isLocal = in_array($_SERVER['REMOTE_ADDR'], array('localhost', '10.0.0.1', '127.0.0.1', '::1')) || stripos($_SERVER['SERVER_NAME'], 'localhost') !== false;
+        $this->suffix = $this->getOptimizedFileSuffix();
         $this->parseCompressionSettingsField();
         $this->setIgnoredSizes();
     }
@@ -53,16 +55,16 @@ class ImageOptim extends WireData implements Module
         // Generate optimized files manually
         $this->addHook('Pageimage::optimize', $this, 'getOptimizedPageimage');
 
-        // Hook into deletion of files to also delete variations
-        $this->addHook('Pageimages::delete', $this, 'deleteOptimizedPageimage');
+        // Remove optimized variations
+        $this->addHook('Pageimage::removeOptimizedVariations', $this, 'hookRemoveOptimizedVariations');
 
-        // Optimize image variations on resize / crop
-
-		$this->addHookBefore('Pageimage::size', $this, 'beforePageimageSize');
-		$this->addHookAfter('Pageimage::size', $this, 'afterPageimageSize');
+        // Auto-mode: optimize image variations on resize
+        $this->addHookBefore('Pageimage::size', $this, 'beforePageimageSize');
+        $this->addHookAfter('Pageimage::size', $this, 'afterPageimageSize');
         $this->addHookBefore('ImageSizer::resize', $this, 'beforeImageSizerResize');
         $this->addHookAfter('ImageSizer::resize', $this, 'afterImageSizerResize');
-        
+
+        // To-do: optimize on crop and in RTE fields
         // $this->addHookBefore('Pageimage::crop', $this, 'beforePageimageCrop');
         // $this->addHookAfter('ProcessPageEditImageSelect::executeResize', $this, 'imageSelectResize');
     }
@@ -202,6 +204,7 @@ class ImageOptim extends WireData implements Module
     public function beforePageimageSize(HookEvent $event) {
         $this->image = null;
         $this->optionOverrides = null;
+        $this->replaceImage = false;
         $image = $event->object;
 
         list($width, $height, $options) = $event->arguments;
@@ -227,6 +230,7 @@ class ImageOptim extends WireData implements Module
         if ($this->auto_optimize || @$options['optimize']) {
             $this->image = $image;
             $this->optionOverrides = $options;
+            $this->replaceImage = $this->auto_optimize;
         }
     }
 
@@ -259,8 +263,8 @@ class ImageOptim extends WireData implements Module
         if ($this->image) {
             $resizer = $event->object;
             $basename = $this->getBasename($resizer->filename);
-            $this->optimizeImageByPath($resizer->filename, true, $this->optionOverrides);
             $this->logDebug("Optimizing image on resize: {$basename}");
+            $this->optimizeImageByPath($resizer->filename, $this->replaceImage, $this->optionOverrides);
         }
     }
 
@@ -276,6 +280,7 @@ class ImageOptim extends WireData implements Module
     public function afterPageimageSize(HookEvent $event) {
         $this->image = null;
         $this->optionOverrides = null;
+        $this->replaceImage = false;
     }
 
     /**
@@ -526,21 +531,6 @@ class ImageOptim extends WireData implements Module
     }
 
     /**
-     * Returns true if the path is a path to an optimized version of an image
-     *
-     * @param $path
-     * @return bool
-     *
-     */
-
-    protected function isOptimizedVariation($path) {
-        $info = pathinfo($path);
-        $nameSegments = explode('.', $info['filename']);
-
-        return (end($nameSegments) == $this->getOptimizedFileSuffix());
-    }
-
-    /**
      * Get file suffix of optimized images
      *
      * @return string
@@ -561,83 +551,58 @@ class ImageOptim extends WireData implements Module
 
     protected function getOptimizedPath($image) {
 
-		if ($image instanceof Pageimage) {
-			$filename = $image->filename;
-		} else {
-			$filename = $image;
+        if($image instanceof Pageimage) {
+            $filename = $image->filename;
+            $separator = $image->getOriginal() ? '-' : '.-';
+        } else {
+            $filename = $image;
+            $separator = '-';
         }
 
-        $info = pathinfo($filename);
+        $pieces = explode('.', $filename);
+        $extension = array_pop($pieces);
+        $variation = $separator . $this->suffix;
+        $optimized = implode('.', $pieces) . "{$variation}.{$extension}";
 
-        return $info['dirname'] . '/' . $info['filename'] . '.' . $this->getOptimizedFileSuffix() . '.' . $info['extension'];
+        return $optimized;
     }
 
     /**
-     * Remove all optimized versions of a Pageimage
+     * Hook: remove all optimized variations of Pageimage
      *
      * @param HookEvent $event
      *
      */
 
-    public function deleteOptimizedPageimage(HookEvent $event) {
-        $images = $event->object;
-        $image = $event->arguments[0];
-
-        if (is_string($image)) {
-            $image = $images->get($image);
-        }
-        if (!$image) {
-            return;
-        }
-
-        $num = 0;
-
-        // Remove all optimized image variations
-
-        foreach ($this->getAssociatedImages($image) as $image_file) {
-            try {
-                unlink($image_file);
-                $num++;
-            }
-            catch (Exception $e) {
-                $this->log("Error: associated images couldn't be removed for $image->name.");
-            }
-        }
-
-        if ($this->debug) {
-            $this->log("Removed {$num} optimized image(s)");
-        }
+    public function hookRemoveOptimizedVariations(HookEvent $event) {
+        $this->removeOptimizedVariations($event->object);
+        $event->return = $event->object;
     }
 
     /**
-     * Return all associated image files of a Pageimage: variations, etc.
+     * Remove all optimized variations of a Pageimage
      *
      * @param Pageimage $image
-     * @return array
      *
      */
 
-    protected function getAssociatedImages(Pageimage $image) {
-        $info = pathinfo($this->getImagePath($image));
-        return glob($info['dirname'] . '/' . $info['filename'] . "*");
+    public function removeOptimizedVariations(Pageimage $image) {
+        $optimizedVariations = $image->getVariations(array('suffix' => $this->suffix));
+        $count = 0;
+        foreach($optimizedVariations as $variation) {
+            if(is_file($variation->filename)) {
+                unlink($variation->filename);
+                $count++;
+            }
+        }
+        $image->variations = null;
+        $this->logDebug("Removed {$count} optimized image(s)");
     }
 
     /**
-     * Return path of a Pageimage object
-     *
-     * @param Pageimage $image
-     * @return string
+     * Set ignoredSizes array from admin thumb sizes
      *
      */
-
-    protected function getImagePath(Pageimage $image) {
-        return wire('config')->paths->files . $image->page->id . '/' . $image->name;
-    }
-
-    /**
-	 * Set ignoredSizes array from admin thumb sizes
-	 *
-	 */
 
     protected function setIgnoredSizes() {
 
