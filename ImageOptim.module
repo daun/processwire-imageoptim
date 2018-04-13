@@ -51,11 +51,9 @@ class ImageOptim extends WireData implements Module
     public function ready() {
 
         // Generate optimized files manually
-
         $this->addHook('Pageimage::optimize', $this, 'getOptimizedPageimage');
 
         // Hook into deletion of files to also delete variations
-
         $this->addHook('Pageimages::delete', $this, 'deleteOptimizedPageimage');
 
         // Optimize image variations on resize / crop
@@ -91,9 +89,9 @@ class ImageOptim extends WireData implements Module
 
     /**
      * Allowed image types
-     * 
-	 * @return array
-     * 
+     *
+     * @return array
+     *
      */
 
     private static function allowedImageTypes() {
@@ -104,8 +102,8 @@ class ImageOptim extends WireData implements Module
     /**
      * Check if image at given path can be compressed
      *
-	 * @param string $path Path of image file
-	 * @return bool
+     * @param string $path Path of image file
+     * @return bool
      *
      */
 
@@ -124,22 +122,22 @@ class ImageOptim extends WireData implements Module
         return false;
     }
 
-	/**
-	 * Check if image size is allowed at given $width and $height
-	 *
-	 * @param int $width Resized image width
-	 * @param int $height Resized image height
-	 * @return bool
+    /**
+     * Check if image size is allowed at given $width and $height
      *
-	 */
+     * @param int $width Resized image width
+     * @param int $height Resized image height
+     * @return bool
+     *
+     */
 
-	protected function isImageSizeAllowed($width, $height) {
-		foreach($this->ignoredSizes as $size) {
-			if($size['width'] === $width && $size['height'] === $height) {
-				return false;
-			}
-		}
-		return true;
+    protected function isImageSizeAllowed($width, $height) {
+        foreach($this->ignoredSizes as $size) {
+            if($size['width'] === $width && $size['height'] === $height) {
+                return false;
+            }
+        }
+        return true;
     }
 
 
@@ -147,7 +145,7 @@ class ImageOptim extends WireData implements Module
      * Get compression settings by file type
      *
      * @param string $type Image type (extension)
-	 * @return array
+     * @return array
      *
      */
 
@@ -170,8 +168,8 @@ class ImageOptim extends WireData implements Module
     /**
      * Get compression settings from file path
      *
-	 * @param string $path Path of image file
-	 * @return array
+     * @param string $path Path of image file
+     * @return array
      *
      */
 
@@ -179,16 +177,16 @@ class ImageOptim extends WireData implements Module
         return $this->getCompressionSettingsByFiletype($this->getFileExtension($path));
     }
 
-	/**
-	 * Pageimage::size before hook
+    /**
+     * Pageimage::size before hook
      *
      * Auto mode, step 1 -- flag images to be compressed
-	 *
-	 * @param HookEvent $event
-	 *
-	 */
+     *
+     * @param HookEvent $event
+     *
+     */
 
-	public function beforePageimageSize(HookEvent $event) {
+    public function beforePageimageSize(HookEvent $event) {
         $this->image = null;
         $this->optionOverrides = null;
         $image = $event->object;
@@ -204,47 +202,47 @@ class ImageOptim extends WireData implements Module
 
         unset($options['quality']); // Clashes with PW quality option = JPEG quality
 
-		if (@$options['optimize'] === false) {
+        if (@$options['optimize'] === false) {
             return;
         }
-		if (!$this->isImageAllowed($image->filename)) {
+        if (!$this->isImageAllowed($image->filename)) {
             return;
         }
         if (!$this->isImageSizeAllowed((int) $width, (int) $height)) {
             return;
         }
-		if ($this->auto_optimize || @$options['optimize']) {
-			$this->image = $image;
-			$this->optionOverrides = $options;
-		}
+        if ($this->auto_optimize || @$options['optimize']) {
+            $this->image = $image;
+            $this->optionOverrides = $options;
+        }
     }
 
-	/**
-	 * ImageSizer::resize before hook
+    /**
+     * ImageSizer::resize before hook
      *
      * Auto mode, step 2 -- set quality to 100% before resize
-	 *
-	 * @param HookEvent $event
-	 *
-	 */
+     *
+     * @param HookEvent $event
+     *
+     */
 
-	public function beforeImageSizerResize(HookEvent $event) {
-		if($this->image && $this->image instanceof Pageimage) {
-			$resizer = $event->object;
+    public function beforeImageSizerResize(HookEvent $event) {
+        if($this->image && $this->image instanceof Pageimage) {
+            $resizer = $event->object;
             $resizer->setQuality(100);
         }
     }
 
-	/**
-	 * ImageSizer::resize after hook
+    /**
+     * ImageSizer::resize after hook
      *
      * Auto mode, step 3 -- optimize image if flagged before
-	 *
-	 * @param HookEvent $event
-	 *
-	 */
+     *
+     * @param HookEvent $event
+     *
+     */
 
-	public function afterImageSizerResize(HookEvent $event) {
+    public function afterImageSizerResize(HookEvent $event) {
         if ($this->image) {
             $resizer = $event->object;
             $basename = $this->getBasename($resizer->filename);
@@ -255,19 +253,19 @@ class ImageOptim extends WireData implements Module
         }
     }
 
-	/**
-	 * Pageimage::size after hook
+    /**
+     * Pageimage::size after hook
      *
      * Auto mode, step 4 -- unset flagged image and option overrides
      *
      * @param HookEvent $event
-	 *
-	 */
+     *
+     */
 
-	public function afterPageimageSize(HookEvent $event) {
+    public function afterPageimageSize(HookEvent $event) {
         $this->image = null;
         $this->optionOverrides = null;
-	}
+    }
 
     /**
      * Returns the optimized version of a given picture
@@ -642,20 +640,20 @@ class ImageOptim extends WireData implements Module
 	 *
 	 */
 
-	protected function setIgnoredSizes() {
+    protected function setIgnoredSizes() {
 
         // Ignore admin thumbnail sizes
 
-		$width = wire('config')->adminThumbOptions['width'];  // deprecated option
+        $width = wire('config')->adminThumbOptions['width'];  // deprecated option
         $height = wire('config')->adminThumbOptions['height']; // deprecated option
         $grid = wire('config')->adminThumbOptions['gridSize']; // currently in use
 
         // $this->ignoredSizes[] = array('width' => (int) $width, 'height' => (int) $height);
 
-		$this->ignoredSizes[] = array('width' => (int) $grid, 'height' => 0);
-		$this->ignoredSizes[] = array('width' => (int) $grid * 2, 'height' => 0); // @2x
-		$this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid);
-		$this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid * 2); // @2x
+        $this->ignoredSizes[] = array('width' => (int) $grid, 'height' => 0);
+        $this->ignoredSizes[] = array('width' => (int) $grid * 2, 'height' => 0); // @2x
+        $this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid);
+        $this->ignoredSizes[] = array('width' => 0, 'height' => (int) $grid * 2); // @2x
     }
 
     /**
