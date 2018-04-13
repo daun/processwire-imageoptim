@@ -98,6 +98,19 @@ class ImageOptim extends WireData implements Module
         return array('png', 'jpeg', 'jpg', 'gif');
     }
 
+    /**
+     * Log message if in debug mode
+     *
+     * @return array
+     *
+     */
+
+    private function logDebug($message) {
+        if ($this->debug) {
+            $this->log($message);
+        }
+    }
+
 
     /**
      * Check if image at given path can be compressed
@@ -246,10 +259,8 @@ class ImageOptim extends WireData implements Module
         if ($this->image) {
             $resizer = $event->object;
             $basename = $this->getBasename($resizer->filename);
-            if ($this->debug) {
-                $this->log("Optimizing image on resize: {$basename}");
-            }
             $this->optimizeImageByPath($resizer->filename, true, $this->optionOverrides);
+            $this->logDebug("Optimizing image on resize: {$basename}");
         }
     }
 
@@ -277,10 +288,9 @@ class ImageOptim extends WireData implements Module
     public function getOptimizedPageimage(HookEvent $event) {
         $image = $event->object;
         $overrides = $event->arguments(0);
-        if ($this->debug) {
-            $this->log("Optimizing image manually: {$image->basename}");
-        }
         $event->return = $this->optimizePageimage($image, $overrides);
+
+        $this->logDebug("Optimizing image manually: {$image->basename}");
     }
 
     /**
@@ -304,12 +314,11 @@ class ImageOptim extends WireData implements Module
         // Return cached image if possible
 
         if (is_file($destination) && filemtime($destination) >= filemtime($source)) {
-            if ($this->debug) {
-                $this->log("Optimized file already exists: " . $this->getBasename($destination));
-            }
             $optimized = clone $image;
             $optimized->setFilename($destination);
             $optimized->setOriginal($image);
+
+            $this->logDebug("Optimized file already exists: " . $this->getBasename($destination));
         }
 
         // Fetch optimized image
@@ -348,9 +357,7 @@ class ImageOptim extends WireData implements Module
 
         if ($replace) {
             $destination = $path;
-            if ($this->debug) {
-                $this->log("Replacing file in place: {$path}");
-            }
+            $this->logDebug("Replacing file in place: {$path}");
         }
 
         // Create optimized variation: get optimized filename & check if it exists
@@ -358,16 +365,12 @@ class ImageOptim extends WireData implements Module
         else {
             $destination = $this->getOptimizedPath($path);
             if (is_file($destination) && filemtime($destination) >= filemtime($path)) {
-                if ($this->debug) {
-                    $this->log("Optimized file already exists: {$destination}");
-                }
+                $this->logDebug("Optimized file already exists: {$destination}");
                 return true;
             }
         }
 
-        if ($this->debug) {
-            $this->log("Fetching optimized image to {$destination}");
-        }
+        $this->logDebug("Fetching optimized image to {$destination}");
         return $this->fetchOptimizedImage($path, $destination, $overrides);
     }
 
@@ -424,15 +427,11 @@ class ImageOptim extends WireData implements Module
 
         if (strpos($url, '://') !== false && !$this->isLocal) {
             $apiImage = $api->imageFromURL($url);
-            if ($this->debug) {
-                $this->log("Optimizing image from URL: {$url}");
-            }
+            $this->logDebug("Optimizing image from URL: {$url}");
         }
         else if ($path && file_exists($path)) {
             $apiImage = $api->imageFromPath($path);
-            if ($this->debug) {
-                $this->log("Optimizing image from path: {$path}");
-            }
+            $this->logDebug("Optimizing image from path: {$path}");
         }
         else {
             $this->log("Error: image is neither Pageimage nor path: {$image}");
