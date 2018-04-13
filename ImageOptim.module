@@ -75,7 +75,7 @@ class ImageOptim extends WireData implements Module
      */
 
     public function ___install() {
-        if (!$this->canPerformApiCalls()) {
+        if (!$this->serverCanPerformApiCalls()) {
             throw new WireException("Your PHP has allow_url_fopen disabled, which is required by ImageOptim.");
         }
     }
@@ -202,6 +202,11 @@ class ImageOptim extends WireData implements Module
      */
 
     public function beforePageimageSize(HookEvent $event) {
+
+        if (!$this->canConvertImages()) {
+            return;
+        }
+
         $this->image = null;
         $this->optionOverrides = null;
         $this->replaceImage = false;
@@ -309,7 +314,7 @@ class ImageOptim extends WireData implements Module
     protected function optimizePageimage($image, $overrides = null) {
 
         if (!$this->isPageimage($image)) {
-            return;
+            return $image;
         }
 
         $source = $image->filename;
@@ -330,9 +335,11 @@ class ImageOptim extends WireData implements Module
 
         else {
             $this->fetchOptimizedImage($image, $destination, $overrides);
-            $optimized = clone $image;
-            $optimized->setFilename($destination);
-            $optimized->setOriginal($image);
+            if (is_file($destination)) {
+                $optimized = clone $image;
+                $optimized->setFilename($destination);
+                $optimized->setOriginal($image);
+            }
         }
 
         // Worst case, return original
@@ -358,7 +365,7 @@ class ImageOptim extends WireData implements Module
             return false;
         }
 
-        // Replace file: path = destiantion
+        // Replace file: path = destination
 
         if ($replace) {
             $destination = $path;
@@ -391,6 +398,17 @@ class ImageOptim extends WireData implements Module
      */
 
     protected function fetchOptimizedImage($image, $destination, $overrides = array()) {
+
+        if (!$this->serverCanPerformApiCalls()) {
+            $this->log("Error: server is not configured to allow outgoing API calls.");
+            return false;
+        }
+
+        if (!$this->username) {
+            $this->log("Error: missing ImageOptim username");
+            return false;
+        }
+
         $api = new \ImageOptim\API($this->username);
 
         // Get path / url from image
@@ -479,8 +497,8 @@ class ImageOptim extends WireData implements Module
      *
      */
 
-    protected function canPerformApiCalls() {
-        return ($this->ini_get_bool('allow_url_fopen'));
+    protected function serverCanPerformApiCalls() {
+        return $this->ini_get_bool('allow_url_fopen');
     }
 
     /**
@@ -491,7 +509,7 @@ class ImageOptim extends WireData implements Module
      */
 
     public function canConvertImages() {
-        return $this->canPerformApiCalls();
+        return $this->username && $this->serverCanPerformApiCalls();
     }
 
     /**
