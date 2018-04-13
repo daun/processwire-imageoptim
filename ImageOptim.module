@@ -18,7 +18,7 @@ class ImageOptim extends WireData implements Module
 
     private $image = null;
     private $optionOverrides = array();
-    private $isLocal;
+    private $isLocal = false;
     private $compressionSettingsByFileType;
     private $ignoredSizes = array();
     private $debug = false;
