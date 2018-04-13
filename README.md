@@ -26,7 +26,7 @@ For detailed usage instructions and all API parameters, see [USAGE.md](./USAGE.m
 
 The compression level can be set globally. Alternatively, compression settings can be set per filetype, e.g. medium quality for JPEGs and low quality for PNGs. For details, see the module configuration screen.
 
-Optimized files are renamed: `*.jpg` becomes `*.optim.jpg`. This suffix can be configured in the module settings.
+Optimized files are renamed: `*.jpg` becomes `*-optim.jpg`. This suffix can be configured in the module settings.
 
 Note that in automatic mode, files are not renamed but swapped in place.
 

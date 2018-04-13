@@ -33,6 +33,12 @@ When in auto mode, just pass the `optimize` options along with your ImageResizer
 
 # Filenames
 
-Optimized images will be suffixed, e.g. `image.jpg` becomes `image.optim.jpg`. You can configure the suffix in the module settings.
+Optimized images will be suffixed, e.g. `image.jpg` becomes `image-optim.jpg`. You can configure the suffix in the module settings.
 
-Image variations optimized in auto mode will **not** be suffixed and will keep their filename.
+Image variations optimized in auto mode will **not** be suffixed and will keep their original filenames.
+
+# Removing optimized variations
+
+To remove all manually optimized variations of an image, call `removeOptimizedVariations()` on it.
+
+`$image->removeOptimizedVariations()`
