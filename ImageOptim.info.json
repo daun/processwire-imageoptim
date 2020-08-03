@@ -3,7 +3,7 @@
     "version": "0.1",
     "author": "Philipp Daun",
     "summary": "Compress images using the ImageOptim API",
-    "href": "https://github.com/philippdaun/ImageOptim",
+    "href": "https://github.com/daun/processwire-imageoptim",
     "icon": "magic",
     "autoload": true,
     "singular": true,

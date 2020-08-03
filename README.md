@@ -1,10 +1,10 @@
-# ImageOptim
+# ProcessWire ImageOptim
 
 This ProcessWire module is a wrapper around [ImageOptim](https://imageoptim.com), a service that compresses and optimizes images in the cloud. ImageOptim currently handles JPG, PNG and GIF files.
 
 Please refer to their site for [API details](https://imageoptim.com/api) and [pricing information](https://imageoptim.com/api/pricing).
 
-![Module configuration screen](https://github.com/philippdaun/ImageOptim/raw/master/ImageOptim.png)
+![Module configuration screen](https://github.com/daun/processwire-imageoptim/raw/master/ImageOptim.png)
 
 ## Installation
 
@@ -18,9 +18,9 @@ If you already have an account, you can find your username in the [ImageOptim da
 
 ## Usage
 
-Images can be optimized by calling the `optimize()` method on any image. The module also has an automatic mode that optimizes all image variations after resizing. This is the recommended way to use this module since it leaves the original image uncompressed, but optimizes all derivative images.
+See [Usage](./USAGE.md) for detailed instructions and all API parameters.
 
-For detailed usage instructions and all API parameters, see [USAGE.md](./USAGE.md)
+Images can be optimized by calling the `optimize()` method on any image. The module also has an automatic mode that optimizes all image variations after resizing. This is the recommended way to use this module since it leaves the original image uncompressed, but optimizes all derivative images.
 
 ## Module options
 
@@ -38,10 +38,4 @@ Note that in automatic mode, files are not renamed but swapped in place.
 
 ## License
 
-This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 3 of the License, or (at your option) any later version.
-
-This program is distributed in the hope that it will be useful, but WITHOUT ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for more details.
-
-You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301, USA.
-
-(See included LICENSE file for full license text.)
+[GPL](https://opensource.org/licenses/GPL-3.0)
